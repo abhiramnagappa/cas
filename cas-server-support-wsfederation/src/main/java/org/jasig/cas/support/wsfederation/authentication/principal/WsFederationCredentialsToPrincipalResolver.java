@@ -52,7 +52,7 @@ public final class WsFederationCredentialsToPrincipalResolver extends AbstractPe
      */
     @Override
     public boolean supports(final Credentials credentials) {
-        return credentials != null && (WsFederationCredentials.class.isAssignableFrom(credentials.getClass()));
+        return credentials != null && ( WsFederationCredentials.class.isAssignableFrom(credentials.getClass()) );
     }
     
     public void setConfiguration(WsFederationConfiguration configuration) {

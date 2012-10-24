@@ -44,7 +44,7 @@ public final class WsFederationAuthenticationHandler extends AbstractPreAndPostP
     protected boolean doAuthentication(final Credentials credentials) throws AuthenticationException {
         final WsFederationCredentials wsFederationCredentials = (WsFederationCredentials) credentials;
         
-        if (wsFederationCredentials.getCredential() != null ) {
+        if ( wsFederationCredentials.getCredential() != null ) {
             return true;
         } else {
             return false;

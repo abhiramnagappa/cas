@@ -39,5 +39,6 @@ public interface WsFederationConstants {
     public final static String WRESULT = "wresult";
     
     public final static String QUERYSTRING = "?wa=wsignin1.0&wtrealm=";
-            
+    
+    public final static String PROPERTYURL = "WsFederationIdentityProviderUrl";
 }

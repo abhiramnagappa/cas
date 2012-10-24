@@ -28,9 +28,11 @@ import org.jasig.cas.authentication.principal.Service;
 import org.jasig.cas.support.wsfederation.WsFederationConfiguration;
 import org.jasig.cas.support.wsfederation.WsFederationConstants;
 import org.jasig.cas.support.wsfederation.WsFederationUtils;
+import org.jasig.cas.support.wsfederation.authentication.principal.WsFederationCredential;
 import org.jasig.cas.support.wsfederation.authentication.principal.WsFederationCredentials;
 import org.jasig.cas.ticket.TicketException;
 import org.jasig.cas.web.support.WebUtils;
+import org.opensaml.saml1.core.impl.AssertionImpl;
 import org.slf4j.Logger;
 import org.slf4j.LoggerFactory;
 import org.springframework.webflow.action.AbstractAction;
@@ -58,45 +60,63 @@ public final class WsFederationAction extends AbstractAction {
         final HttpServletRequest request = WebUtils.getHttpServletRequest(context);
         final HttpSession session = request.getSession();
         
-        // get provider type
         String wresult = request.getParameter(WsFederationConstants.WRESULT);
         logger.debug("wresult : {}", wresult);
         
         // it's an authentication
-        if (StringUtils.isNotBlank(wresult)) {
+        if ( StringUtils.isNotBlank(wresult) ) {
                     
             // create credentials
-            final Credentials credentials = new WsFederationCredentials(WsFederationUtils.createCredentialFromToken(wresult));
+            AssertionImpl assertion = WsFederationUtils.parseTokenString(wresult);
             
-            // retrieve parameters from web session
-            final Service service = (Service) session.getAttribute(WsFederationConstants.SERVICE);
-            context.getFlowScope().put(WsFederationConstants.SERVICE, service);
-            restoreRequestAttribute(request, session, WsFederationConstants.THEME);
-            restoreRequestAttribute(request, session, WsFederationConstants.LOCALE);
-            restoreRequestAttribute(request, session, WsFederationConstants.METHOD);
-            
-            try {
-                WebUtils.putTicketGrantingTicketInRequestScope(context, this.centralAuthenticationService
-                    .createTicketGrantingTicket(credentials));
-                return success();
-            } catch (final TicketException e) {
-                logger.error(e.getMessage());
+            //Validate the signature
+            if ( assertion != null && WsFederationUtils.validateSignature(assertion, configuration.getSigningCertificates()) ) {
+                final WsFederationCredential credential = WsFederationUtils.createCredentialFromToken(assertion);
+                
+                final Credentials credentials;
+                if ( credential != null 
+                        && credential.isValid(configuration.getRelyingPartyIdentifier(), 
+                                               configuration.getIdentityProviderIdentifier(),
+                                               configuration.getTolerance()) ) {
+                    credentials = new WsFederationCredentials(credential);
+                } else {
+                    logger.equals("Saml assertions are blank or no longer valid.");
+                    return error();
+                }
+                        
+                // retrieve parameters from web session
+                final Service service = (Service) session.getAttribute(WsFederationConstants.SERVICE);
+                context.getFlowScope().put(WsFederationConstants.SERVICE, service);
+                restoreRequestAttribute(request, session, WsFederationConstants.THEME);
+                restoreRequestAttribute(request, session, WsFederationConstants.LOCALE);
+                restoreRequestAttribute(request, session, WsFederationConstants.METHOD);
+
+                try {
+                    WebUtils.putTicketGrantingTicketInRequestScope(context, this.centralAuthenticationService
+                        .createTicketGrantingTicket(credentials));
+                    return success();
+                } catch (final TicketException e) {
+                    logger.error(e.getMessage());
+                    return error();
+                }
+            }
+            else {
+                logger.error("WS Requested Security Token is blank or the signature is not valid. ");
                 return error();
             }
-          
-        } else {
-            // no authentication : go to login page
+            
+        } else { // no authentication : go to login page
             
             // save parameters in web session
             final Service service = (Service) context.getFlowScope().get(WsFederationConstants.SERVICE);
-            if (service != null) {
+            if ( service != null ) {
                 session.setAttribute(WsFederationConstants.SERVICE, service);
             }
             saveRequestParameter(request, session, WsFederationConstants.THEME);
             saveRequestParameter(request, session, WsFederationConstants.LOCALE);
             saveRequestParameter(request, session, WsFederationConstants.METHOD);
             
-            final String key = "WsFederationIdentityProviderUrl";
+            final String key = WsFederationConstants.PROPERTYURL;
             String authorizationUrl = null;
             authorizationUrl = this.configuration.getIdentityProviderUrl() +
                                WsFederationConstants.QUERYSTRING +
@@ -104,8 +124,8 @@ public final class WsFederationAction extends AbstractAction {
 
             logger.debug("{} -> {}", key, authorizationUrl);
             context.getFlowScope().put(key, authorizationUrl);
-        }
-        
+        }     
+
         return error();
     }
     
@@ -130,7 +150,7 @@ public final class WsFederationAction extends AbstractAction {
      */
     private void saveRequestParameter(final HttpServletRequest request, final HttpSession session, final String name) {
         final String value = request.getParameter(name);
-        if (value != null) {
+        if ( value != null ) {
             session.setAttribute(name, value);
         }
     }

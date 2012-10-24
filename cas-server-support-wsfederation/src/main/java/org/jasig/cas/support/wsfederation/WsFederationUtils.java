@@ -25,6 +25,7 @@ import java.io.FileInputStream;
 import java.io.FileNotFoundException;
 import java.io.IOException;
 import java.io.InputStream;
+import java.io.UnsupportedEncodingException;
 import java.security.KeyFactory;
 import java.security.NoSuchAlgorithmException;
 import java.security.PublicKey;
@@ -33,13 +34,15 @@ import java.security.cert.CertificateFactory;
 import java.security.cert.X509Certificate;
 import java.security.spec.InvalidKeySpecException;
 import java.security.spec.X509EncodedKeySpec;
+import java.util.ArrayList;
 import java.util.HashMap;
 import java.util.List;
-import java.util.Map;
-import java.util.logging.Level;
 import org.jasig.cas.support.wsfederation.authentication.principal.WsFederationCredential;
+import org.joda.time.DateTime;
+import org.joda.time.DateTimeZone;
 import org.opensaml.DefaultBootstrap;
 import org.opensaml.saml1.core.Attribute;
+import org.opensaml.saml1.core.Conditions;
 import org.opensaml.saml1.core.impl.AssertionImpl;
 import org.opensaml.ws.wsfed.RequestedSecurityToken;
 import org.opensaml.ws.wsfed.impl.RequestSecurityTokenResponseImpl;
@@ -47,7 +50,9 @@ import org.opensaml.xml.Configuration;
 import org.opensaml.xml.ConfigurationException;
 import org.opensaml.xml.io.Unmarshaller;
 import org.opensaml.xml.io.UnmarshallerFactory;
+import org.opensaml.xml.io.UnmarshallingException;
 import org.opensaml.xml.parse.BasicParserPool;
+import org.opensaml.xml.parse.XMLParserException;
 import org.opensaml.xml.schema.XSAny;
 import org.opensaml.xml.security.x509.BasicX509Credential;
 import org.opensaml.xml.signature.Signature;
@@ -55,126 +60,178 @@ import org.opensaml.xml.signature.SignatureValidator;
 import org.opensaml.xml.validation.ValidationException;
 import org.slf4j.Logger;
 import org.slf4j.LoggerFactory;
+import org.w3c.dom.Document;
+import org.w3c.dom.Element;
 
-/**
- * 
- * 
+/** 
  * @author John Gasper
  * @since 3.5.1
  */
 public final class WsFederationUtils {
     
     private static final Logger logger = LoggerFactory.getLogger(WsFederationUtils.class);
-    
+
     static{
         try { 
             // Initialize the library
-            DefaultBootstrap.bootstrap();
+            DefaultBootstrap.bootstrap();           
         } catch (ConfigurationException ex) {
             logger.error(ex.getMessage());
         }
     }
     
-    public static WsFederationCredential createCredentialFromToken(String wresult) 
-            throws Exception{
+    public static AssertionImpl parseTokenString(String wresult)  {
+        RequestSecurityTokenResponseImpl rsToken;
+                
+        BasicParserPool parserPool = new BasicParserPool();
+        parserPool.setNamespaceAware(true);
 
-        WsFederationCredential credential = new WsFederationCredential();
-
-        // Get parser pool manager
-        BasicParserPool ppMgr = new BasicParserPool();
-        ppMgr.setNamespaceAware(true);
-        InputStream in = new ByteArrayInputStream(wresult.getBytes("UTF-8"));
-
-        org.w3c.dom.Document document = ppMgr.parse(in);
-        org.w3c.dom.Element metadataRoot = document.getDocumentElement();
-
-        UnmarshallerFactory unmarshallerFactory = Configuration.getUnmarshallerFactory();
-        Unmarshaller unmarshaller = unmarshallerFactory.getUnmarshaller(metadataRoot);
-        RequestSecurityTokenResponseImpl authRequest = (RequestSecurityTokenResponseImpl) unmarshaller.unmarshall(metadataRoot);
-
-        List<RequestedSecurityToken> rst = authRequest.getRequestedSecurityToken();
+        try {
+            InputStream in = new ByteArrayInputStream(wresult.getBytes("UTF-8"));
+            Document document = parserPool.parse(in);
+            Element metadataRoot = document.getDocumentElement();
+            UnmarshallerFactory unmarshallerFactory = Configuration.getUnmarshallerFactory();
+            Unmarshaller unmarshaller = unmarshallerFactory.getUnmarshaller(metadataRoot);
+            rsToken = (RequestSecurityTokenResponseImpl) unmarshaller.unmarshall(metadataRoot);
+        } catch (UnmarshallingException ex) {
+            logger.warn(ex.getMessage());
+            return null;
+        } catch (XMLParserException ex) {
+            logger.warn(ex.getMessage());
+            return null;
+        } catch (UnsupportedEncodingException ex) {
+            logger.warn(ex.getMessage());
+            return null;
+        }
+        //Get our (Saml1) token
+        List<RequestedSecurityToken> rst = rsToken.getRequestedSecurityToken();
         AssertionImpl assertion = (AssertionImpl) rst.get(0).getSecurityTokens().get(0);
+        
+        return assertion;
+    }
+    
+    public static WsFederationCredential createCredentialFromToken(AssertionImpl assertion) {
+        DateTime retrievedOn = new DateTime().withZone(DateTimeZone.UTC);
+        WsFederationCredential credential = new WsFederationCredential();
+        
+        credential.setRetrievedOn(retrievedOn);
 
-        SignatureValidation(assertion);
-        
-        credential.setIssuer(assertion.getIssuer());
-        credential.setAudience(assertion.getConditions().getAudienceRestrictionConditions().get(0).getAudiences().get(0).getUri());
-        credential.setAuthenticationMethod(assertion.getAuthenticationStatements().get(0).getAuthenticationMethod());
-        //logger.debug("Subject: " + assrt.getSubjectStatements().get(0).getSubject());
         credential.setId(assertion.getID());
-        
-        Map<String,Object> attributes = new HashMap<String,Object>();
-        for (Attribute item : assertion.getAttributeStatements().get(0).getAttributes()) {
-            attributes.put(item.getAttributeName() ,((XSAny)item.getAttributeValues().get(0)).getTextContent());
+        credential.setIssuer(assertion.getIssuer());
+        credential.setIssuedOn(assertion.getIssueInstant());
+
+        Conditions conditions = assertion.getConditions();
+        if ( conditions != null ) {
+            credential.setNotBefore(conditions.getNotBefore());
+            credential.setNotOnOrAfter(conditions.getNotOnOrAfter());
+            credential.setAudience(conditions.getAudienceRestrictionConditions().get(0).getAudiences().get(0).getUri());
+        }
+            
+        if ( assertion.getAuthenticationStatements() !=null && assertion.getAuthenticationStatements().size() > 0 ) {
+            credential.setAuthenticationMethod(assertion.getAuthenticationStatements().get(0).getAuthenticationMethod());
         }
 
+        //retrieve an attributes from the assertion
+        HashMap<String,Object> attributes = new HashMap<String,Object>();
+        for ( Attribute item : assertion.getAttributeStatements().get(0).getAttributes() ) {
+            if ( item.getAttributeValues().size() == 1 ) {
+                attributes.put(item.getAttributeName() ,((XSAny)item.getAttributeValues().get(0)).getTextContent());
+
+            } else {
+
+                ArrayList itemList = new ArrayList();
+
+                for ( int i=0; i<item.getAttributeValues().size(); i++ ) {
+                    itemList.add(((XSAny)item.getAttributeValues().get(i)).getTextContent());
+                }
+
+                if ( !itemList.isEmpty() ) {
+                    attributes.put(item.getAttributeName(), itemList);
+                }
+            }    
+        }
         credential.setAttributes(attributes);
+
         return credential;
     }
 
-    private static boolean SignatureValidation(AssertionImpl assrt)  {
+    public static boolean validateSignature(AssertionImpl assrt, List<BasicX509Credential> x509Creds)  {
  
-        //create SignatureValidator
         SignatureValidator signatureValidator = null;
-        
-        try {
-            signatureValidator = new SignatureValidator(getSigningCredential("signing.cer"));
-        } catch (FileNotFoundException ex) {
-            java.util.logging.Logger.getLogger(WsFederationUtils.class.getName()).log(Level.SEVERE, null, ex);
-        } catch (CertificateException ex) {
-            java.util.logging.Logger.getLogger(WsFederationUtils.class.getName()).log(Level.SEVERE, null, ex);
-        } catch (IOException ex) {
-            java.util.logging.Logger.getLogger(WsFederationUtils.class.getName()).log(Level.SEVERE, null, ex);
-        } catch (NoSuchAlgorithmException ex) {
-            java.util.logging.Logger.getLogger(WsFederationUtils.class.getName()).log(Level.SEVERE, null, ex);
-        } catch (InvalidKeySpecException ex) {
-            java.util.logging.Logger.getLogger(WsFederationUtils.class.getName()).log(Level.SEVERE, null, ex);
-        }
+        for ( BasicX509Credential cred : x509Creds ) {
+            try {
+                signatureValidator = new SignatureValidator(cred);
+            } catch (Exception ex) {
+                logger.warn(ex.getMessage());
+                break;
+            }
 
-        //get the signature to validate from the response object
-        Signature signature = assrt.getSignature();
+            //get the signature to validate from the response object
+            Signature signature = assrt.getSignature();
 
-        //try to validate
-        try 
-        {
-            signatureValidator.validate(signature);
+            //try to validate
+            try 
+            {
+                signatureValidator.validate(signature);
+                return true;
+            }
+            catch (ValidationException ex) 
+            {
+                logger.warn("Signature is NOT valid.");
+                logger.warn(ex.getMessage());
+                break;
+            }
         }
-        catch (ValidationException ve) 
-        {
-            logger.warn("Signature is NOT valid.");
-            logger.warn(ve.getMessage());
             return false;
-        }
-        
-        return true;
     }
 
-    private static BasicX509Credential getSigningCredential(String filename) throws FileNotFoundException, CertificateException, IOException, NoSuchAlgorithmException, InvalidKeySpecException {
+    public static BasicX509Credential getSigningCredential(String filename)  {
         //grab the certificate file
         File certificateFile = new File(filename); 
-
+        BasicX509Credential publicCredential;
+        
         //get the certificate from the file
-        InputStream inputStream2 = new FileInputStream(certificateFile);
-        CertificateFactory certificateFactory = CertificateFactory.getInstance("X.509");
-        X509Certificate certificate = (X509Certificate)certificateFactory.generateCertificate(inputStream2);
-        inputStream2.close();
+        try {
+            InputStream inputStream = new FileInputStream(certificateFile);
+            CertificateFactory certificateFactory = CertificateFactory.getInstance("X.509");
+            X509Certificate certificate = (X509Certificate)certificateFactory.generateCertificate(inputStream);
+            
+            try {
+                inputStream.close();
+            }
+            catch (IOException ex) {
+                logger.warn("Error closing the signing cert file: " + ex.getMessage());
+            }
+            
+            //get the public key from the certificate
+            X509EncodedKeySpec publicKeySpec = new X509EncodedKeySpec(certificate.getPublicKey().getEncoded());
+            
+            //generate public key to validate signatures
+            KeyFactory keyFactory = KeyFactory.getInstance("RSA");
+            PublicKey publicKey = keyFactory.generatePublic(publicKeySpec);
+            
+            //add the public key
+            publicCredential = new BasicX509Credential();
+            publicCredential.setPublicKey(publicKey);
+            
+        } catch (CertificateException ex) {
+            logger.error("Error retrieving the signing cert: " + ex.getMessage());
+            return null;
 
-        //pull out the public key part of the certificate into a KeySpec
-        X509EncodedKeySpec publicKeySpec = new X509EncodedKeySpec(certificate.getPublicKey().getEncoded());
-
-        //get KeyFactory object that creates key objects, specifying RSA
-        KeyFactory keyFactory = KeyFactory.getInstance("RSA");
-        System.out.println("Security Provider: " + keyFactory.getProvider().toString());
-
-        //generate public key to validate signatures
-        PublicKey publicKey = keyFactory.generatePublic(publicKeySpec);
-
-        //create credentials
-        BasicX509Credential publicCredential = new BasicX509Credential();
-
-        //add public key value
-        publicCredential.setPublicKey(publicKey);
+        } catch (FileNotFoundException ex) {
+            logger.error("Error retrieving the signing cert: " + ex.getMessage());
+            return null;
+            
+        } catch (InvalidKeySpecException ex) {
+            logger.error("Error retrieving the signing cert: " + ex.getMessage());
+            return null;
+            
+        } catch (NoSuchAlgorithmException ex) {
+            logger.error("Error retrieving the signing cert: " + ex.getMessage());
+            return null;
+        }
 
         return publicCredential;
     }
+
 }

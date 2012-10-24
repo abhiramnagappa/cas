@@ -18,8 +18,10 @@
  */
 package org.jasig.cas.support.wsfederation;
 
+import java.util.ArrayList;
 import java.util.List;
 import javax.validation.constraints.NotNull;
+import org.opensaml.xml.security.x509.BasicX509Credential;
 
 /**
  * This class gathers configuration information for the WS Federation Identity Provider.
@@ -29,8 +31,9 @@ import javax.validation.constraints.NotNull;
  */
 public final class WsFederationConfiguration {
     @NotNull
-    private String identityProviderUrl;
-    
+    private String identityProviderUrl,
+                   identityProviderIdentifier;
+
     @NotNull 
     private List<String> signingCertificateFiles;
     
@@ -39,12 +42,23 @@ public final class WsFederationConfiguration {
     
     @NotNull
     private String identityAttribute;
+    
+    private int tolerance = 10000;
+
+    private static List<BasicX509Credential> wallet;
 
     public String getIdentityProviderUrl() {
         return this.identityProviderUrl;
     }
     public void setIdentityProviderUrl(final String identityProviderUrl) {
         this.identityProviderUrl = identityProviderUrl;
+    }
+
+    public String getIdentityProviderIdentifier() {
+        return identityProviderIdentifier;
+    }
+    public void setIdentityProviderIdentifier(String identityProviderIdentifier) {
+        this.identityProviderIdentifier = identityProviderIdentifier;
     }
     
     public String getRelyingPartyIdentifier() {
@@ -59,6 +73,17 @@ public final class WsFederationConfiguration {
     }
     public void setSigningCertificateFiles(final List<String> signingCertificateFiles) {
         this.signingCertificateFiles = signingCertificateFiles;
+        
+         List<BasicX509Credential> signingCerts = new ArrayList<BasicX509Credential>();
+            
+            for (String file : signingCertificateFiles) {
+                signingCerts.add(WsFederationUtils.getSigningCredential(file));
+            }
+            
+            this.wallet = signingCerts;
+    }
+    public List<BasicX509Credential> getSigningCertificates() {
+        return this.wallet;
     }
     
     public String getIdentityAttribute() {
@@ -67,4 +92,12 @@ public final class WsFederationConfiguration {
     public void setIdentityAttribute(final String identityAttribute) {
         this.identityAttribute = identityAttribute;
     }
+
+    public int getTolerance() {
+        return tolerance;
+    }
+    public void setTolerance(int tolerance) {
+        this.tolerance = tolerance;
+    }
+
 }
