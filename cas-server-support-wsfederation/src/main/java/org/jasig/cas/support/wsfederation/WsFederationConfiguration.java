@@ -46,6 +46,8 @@ public final class WsFederationConfiguration {
     private int tolerance = 10000;
 
     private static List<BasicX509Credential> wallet;
+    
+    private WsFederationAttributeMutator attributeMutator;
 
     public String getIdentityProviderUrl() {
         return this.identityProviderUrl;
@@ -98,6 +100,14 @@ public final class WsFederationConfiguration {
     }
     public void setTolerance(int tolerance) {
         this.tolerance = tolerance;
+    }
+
+    public WsFederationAttributeMutator getAttributeMutator() {
+        return attributeMutator;
+    }
+
+    public void setAttributeMutator(WsFederationAttributeMutator attributeMutator) {
+        this.attributeMutator = attributeMutator;
     }
 
 }
