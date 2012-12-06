@@ -57,82 +57,102 @@ public final class WsFederationAction extends AbstractAction {
     
     @Override
     protected Event doExecute(final RequestContext context) throws Exception {
-        final HttpServletRequest request = WebUtils.getHttpServletRequest(context);
-        final HttpSession session = request.getSession();
-        
-        String wresult = request.getParameter(WsFederationConstants.WRESULT);
-        logger.debug("wresult : {}", wresult);
-        
-        // it's an authentication
-        if ( StringUtils.isNotBlank(wresult) ) {
-                    
-            // create credentials
-            AssertionImpl assertion = WsFederationUtils.parseTokenString(wresult);
-            
-            //Validate the signature
-            if ( assertion != null && WsFederationUtils.validateSignature(assertion, configuration.getSigningCertificates()) ) {
-                final WsFederationCredential credential = WsFederationUtils.createCredentialFromToken(assertion);
+        try {
+            final HttpServletRequest request = WebUtils.getHttpServletRequest(context);
+            final HttpSession session = request.getSession();
+
+            String wa = request.getParameter(WsFederationConstants.WA);
+
+            // it's an authentication
+            if ( StringUtils.isNotBlank(wa) && wa.equalsIgnoreCase(WsFederationConstants.WSIGNIN)) {
+                String wresult = request.getParameter(WsFederationConstants.WRESULT);
+                logger.debug("wresult : {}", wresult);
                 
-                final Credentials credentials;
-                if ( credential != null 
-                        && credential.isValid(configuration.getRelyingPartyIdentifier(), 
-                                               configuration.getIdentityProviderIdentifier(),
-                                               configuration.getTolerance()) ) {
-                    
-                    //Give the library user a chance to change the attributes as necessary
-                    if (configuration.getAttributeMutator() != null ) {
-                        configuration.getAttributeMutator().modifyAttributes(credential.getAttributes());
+                String wctx = request.getParameter(WsFederationConstants.WCTX);
+                logger.debug("wctx : {}", wctx);
+
+                // create credentials
+                AssertionImpl assertion = WsFederationUtils.parseTokenString(wresult);
+
+                //Validate the signature
+                if ( assertion != null && WsFederationUtils.validateSignature(assertion, configuration.getSigningCertificates()) ) {
+                    final WsFederationCredential credential = WsFederationUtils.createCredentialFromToken(assertion);
+
+                    final Credentials credentials;
+                    if ( credential != null 
+                            && credential.isValid(configuration.getRelyingPartyIdentifier(), 
+                                                   configuration.getIdentityProviderIdentifier(),
+                                                   configuration.getTolerance()) ) {
+
+                        //Give the library user a chance to change the attributes as necessary
+                        if (configuration.getAttributeMutator() != null ) {
+                            configuration.getAttributeMutator().modifyAttributes(credential.getAttributes());
+                        }
+
+                        credentials = new WsFederationCredentials(credential);
+                    } else {
+                        logger.warn("Saml assertions are blank or no longer valid.");
+                        return error();
                     }
-                    
-                    credentials = new WsFederationCredentials(credential);
-                } else {
-                    logger.equals("Saml assertions are blank or no longer valid.");
-                    return error();
-                }
+
+                    // retrieve parameters from web session
+                    try {
+                        final Service service = (Service) session.getAttribute(WsFederationConstants.SERVICE);
+                        context.getFlowScope().put(WsFederationConstants.SERVICE, service);
+                        restoreRequestAttribute(request, session, WsFederationConstants.THEME);
+                        restoreRequestAttribute(request, session, WsFederationConstants.LOCALE);
+                        restoreRequestAttribute(request, session, WsFederationConstants.METHOD);
+                    }
+                    catch(Exception ex)
+                    {
+                        logger.warn("Session is most-likely empty: " + ex.getMessage() );
+                    }
+
+
+                    try {
+                        WebUtils.putTicketGrantingTicketInRequestScope(context, this.centralAuthenticationService
+                            .createTicketGrantingTicket(credentials));
                         
-                // retrieve parameters from web session
-                final Service service = (Service) session.getAttribute(WsFederationConstants.SERVICE);
-                context.getFlowScope().put(WsFederationConstants.SERVICE, service);
-                restoreRequestAttribute(request, session, WsFederationConstants.THEME);
-                restoreRequestAttribute(request, session, WsFederationConstants.LOCALE);
-                restoreRequestAttribute(request, session, WsFederationConstants.METHOD);
-
-                try {
-                    WebUtils.putTicketGrantingTicketInRequestScope(context, this.centralAuthenticationService
-                        .createTicketGrantingTicket(credentials));
-                    return success();
-                } catch (final TicketException e) {
-                    logger.error(e.getMessage());
+                        logger.info("token validated and new WsFederationCredcredentials created: " + credentials.toString());
+                        return success();
+                    } catch (final TicketException e) {
+                        logger.error(e.getMessage());
+                        return error();
+                    }
+                }
+                else {
+                    logger.error("WS Requested Security Token is blank or the signature is not valid. ");
                     return error();
                 }
-            }
-            else {
-                logger.error("WS Requested Security Token is blank or the signature is not valid. ");
-                return error();
-            }
-            
-        } else { // no authentication : go to login page
-            
-            // save parameters in web session
-            final Service service = (Service) context.getFlowScope().get(WsFederationConstants.SERVICE);
-            if ( service != null ) {
-                session.setAttribute(WsFederationConstants.SERVICE, service);
-            }
-            saveRequestParameter(request, session, WsFederationConstants.THEME);
-            saveRequestParameter(request, session, WsFederationConstants.LOCALE);
-            saveRequestParameter(request, session, WsFederationConstants.METHOD);
-            
-            final String key = WsFederationConstants.PROPERTYURL;
-            String authorizationUrl = null;
-            authorizationUrl = this.configuration.getIdentityProviderUrl() +
-                               WsFederationConstants.QUERYSTRING +
-                                this.configuration.getRelyingPartyIdentifier();
 
-            logger.debug("{} -> {}", key, authorizationUrl);
-            context.getFlowScope().put(key, authorizationUrl);
-        }     
+            } else { // no authentication : go to login page
+                logger.debug("Redirecting to IdP");
 
-        return error();
+                // save parameters in web session
+                final Service service = (Service) context.getFlowScope().get(WsFederationConstants.SERVICE);
+                if ( service != null ) {
+                    session.setAttribute(WsFederationConstants.SERVICE, service);
+                }
+                saveRequestParameter(request, session, WsFederationConstants.THEME);
+                saveRequestParameter(request, session, WsFederationConstants.LOCALE);
+                saveRequestParameter(request, session, WsFederationConstants.METHOD);
+
+                final String key = WsFederationConstants.PROPERTYURL;
+                String authorizationUrl = null;
+                authorizationUrl = this.configuration.getIdentityProviderUrl() +
+                                   WsFederationConstants.QUERYSTRING +
+                                   this.configuration.getRelyingPartyIdentifier();
+
+                logger.debug("{} -> {}", key, authorizationUrl);
+                context.getFlowScope().put(key, authorizationUrl);
+            }     
+
+            return error();
+        } catch(Exception ex) {
+            logger.error(ex.getMessage());
+            return error();
+        }
+   
     }
     
     /**
