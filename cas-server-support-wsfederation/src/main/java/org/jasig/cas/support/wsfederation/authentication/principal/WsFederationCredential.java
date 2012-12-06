@@ -21,6 +21,8 @@ package org.jasig.cas.support.wsfederation.authentication.principal;
 
 import java.util.Map;
 import org.joda.time.DateTime;
+import org.slf4j.Logger;
+import org.slf4j.LoggerFactory;
 
 /**
  * This class represents the basic elements of the WsFederation/SAML1 token.
@@ -29,6 +31,7 @@ import org.joda.time.DateTime;
  * @since 3.5.1
  */
 public class WsFederationCredential {
+    private static final Logger logger = LoggerFactory.getLogger(WsFederationCredential.class);
     
     private String issuer,
            audience,
@@ -123,30 +126,35 @@ public class WsFederationCredential {
     public boolean isValid(String expectedAudience, String expectedIssuer, int timeDrift) {
         //check the audience
         if ( !this.getAudience().equalsIgnoreCase(expectedAudience) ) {
+            logger.warn(String.format("isValid: Audience is not valid. (%s)", this.getAudience()));
             return false;
         }
         
         //check the issuer
         if ( !this.getIssuer().equalsIgnoreCase(expectedIssuer) ) {
+            logger.warn(String.format("isValid: Issuer is not valid. (%s)", this.getIssuer()));
             return false;
         }
 
-        //Checking for early usage
+        /*//Checking for early usage
         if ( this.getRetrievedOn().isBefore(this.getNotBefore()) ) {
+            logger.warn(String.format("isValid: Ticket is too early."));
             return false;
         }
-        
+        */
         //Checking for late usage
         if ( this.getRetrievedOn().isAfter(this.getNotOnOrAfter()) ) {
+            logger.warn(String.format("isValid: Ticket is too late."));
             return false;
         }
         
-        //Check that the ticket was recnetly issued.
+        //Check that the ticket was recently issued.
         if ( this.getIssuedOn().isBefore(this.getRetrievedOn().minusMillis(timeDrift)) ||
              this.getIssuedOn().isAfter(this.getRetrievedOn().plusMillis(timeDrift)) ) {
+            logger.warn(String.format("isValid: Ticket outside of drift."));
             return false;
         }
-                
+        logger.debug("isValid: credential is valid."); 
         return true;
     }
 }

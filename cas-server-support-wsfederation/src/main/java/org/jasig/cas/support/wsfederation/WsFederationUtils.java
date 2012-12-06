@@ -106,16 +106,22 @@ public final class WsFederationUtils {
         //Get our (Saml1) token
         List<RequestedSecurityToken> rst = rsToken.getRequestedSecurityToken();
         AssertionImpl assertion = (AssertionImpl) rst.get(0).getSecurityTokens().get(0);
-        
+        if (assertion == null) {
+            logger.debug("parseTokenString: assertion null");
+        }
+        else {
+            logger.debug("parseTokenString: " + assertion.toString());
+        }
+            
         return assertion;
     }
     
     public static WsFederationCredential createCredentialFromToken(AssertionImpl assertion) {
         DateTime retrievedOn = new DateTime().withZone(DateTimeZone.UTC);
-        WsFederationCredential credential = new WsFederationCredential();
+        logger.debug("createCredentialFromToken: retrieved on " + retrievedOn.toString());
         
+        WsFederationCredential credential = new WsFederationCredential();
         credential.setRetrievedOn(retrievedOn);
-
         credential.setId(assertion.getID());
         credential.setIssuer(assertion.getIssuer());
         credential.setIssuedOn(assertion.getIssueInstant());
@@ -134,6 +140,8 @@ public final class WsFederationUtils {
         //retrieve an attributes from the assertion
         HashMap<String,Object> attributes = new HashMap<String,Object>();
         for ( Attribute item : assertion.getAttributeStatements().get(0).getAttributes() ) {
+            logger.debug("createCredentialFromToken: processed attribute:" + item.getAttributeName());
+            
             if ( item.getAttributeValues().size() == 1 ) {
                 attributes.put(item.getAttributeName() ,((XSAny)item.getAttributeValues().get(0)).getTextContent());
 
@@ -151,7 +159,9 @@ public final class WsFederationUtils {
             }    
         }
         credential.setAttributes(attributes);
-
+        
+        logger.debug("createCredentialFromToken: " + credential.toString());
+        
         return credential;
     }
 
@@ -173,15 +183,17 @@ public final class WsFederationUtils {
             try 
             {
                 signatureValidator.validate(signature);
+                logger.debug("validateSignature: Signature is valid.");
                 return true;
             }
             catch (ValidationException ex) 
             {
-                logger.warn("Signature is NOT valid.");
+                logger.warn("validateSignature: Signature is NOT valid.");
                 logger.warn(ex.getMessage());
                 break;
             }
         }
+            logger.warn("validateSignature: Signature doesn't match any signing credential.");
             return false;
     }
 
@@ -231,6 +243,7 @@ public final class WsFederationUtils {
             return null;
         }
 
+        logger.debug("getSigningCredential: key retrieved.");
         return publicCredential;
     }
 
